@@ -27,13 +27,44 @@ function App() {
 
   const [editingId, setEditingId] = useState(null)
   const [statusFilter, setStatusFilter] = useState('all')
-  const [leads, setLeads] = useState(() => {
-    const saved = localStorage.getItem('leaddesk-leads')
-    return saved ? JSON.parse(saved) : initialLeads
-  })
+  const [leads, setLeads] = useState([])
+  const [isLoadingLeads, setIsLoadingLeads] = useState(true)
   const [search, setSearch] = useState('')
 
+  useEffect(() => {
+    async function loadLeads() {
+      try {
+        const response = await fetch(
+          'https://n8n.serhiotester97.ru/webhook/leaddesk/leads'
+        )
 
+        if (!response.ok) {
+          throw new Error(`Ошибка сервера: ${response.status}`)
+        }
+
+        const result = await response.json()
+
+        if (result.success !== true || !Array.isArray(result.leads)) {
+          throw new Error('Сервер вернул некорректный список заявок.')
+        }
+
+        const loadedLeads = result.leads.map((lead) => ({
+          ...lead,
+          id: Number(lead.id),
+          amount: Number(lead.amount),
+        }))
+
+        setLeads(loadedLeads)
+      } catch (error) {
+        console.error('Не удалось загрузить заявки:', error)
+        alert('Не удалось загрузить заявки с сервера.')
+      } finally {
+        setIsLoadingLeads(false)
+      }
+    }
+
+    loadLeads()
+  }, [])
   const filteredLeads = leads.filter((lead) => {
     const query = search.toLowerCase().trim()
 
@@ -70,73 +101,223 @@ function App() {
     amount: '',
   })
 
-  function handleAddLead(event) {
+
+  async function handleAddLead(event) {
     event.preventDefault()
+
     if (!form.name.trim() || !form.email.trim() || !form.service.trim()) {
       alert('Заполни все обязательные поля.')
       return
     }
 
-    if (form.amount === '' || !Number.isFinite(Number(form.amount)) || Number(form.amount) < 0) {
+    if (
+      form.amount === '' ||
+      !Number.isFinite(Number(form.amount)) ||
+      Number(form.amount) < 0
+    ) {
       alert('Укажи корректную сумму.')
       return
     }
+
     const newLead = {
-      id: Date.now(),
       name: form.name.trim(),
       email: form.email.trim(),
       service: form.service.trim(),
       amount: Number(form.amount),
-      status: 'new',
     }
 
-    setLeads((prev) => [newLead, ...prev])
+    try {
+      const response = await fetch('https://n8n.serhiotester97.ru/webhook/leaddesk/leads', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(newLead),
+      })
 
-    setForm({
-      name: '',
-      email: '',
-      service: '',
-      amount: '',
-    })
+      if (!response.ok) {
+        throw new Error(`Ошибка сервера: ${response.status}`)
+      }
 
-    setShowForm(false)
-    setSearch('')
-    setStatusFilter('all')
+      const result = await response.json()
+
+      if (result.success !== true) {
+        throw new Error('Сервер не подтвердил создание заявки.')
+      }
+
+      setLeads((prev) => [
+        {
+          ...result.lead,
+          id: Number(result.lead.id),
+          amount: Number(result.lead.amount),
+        },
+        ...prev,
+      ])
+
+      setForm({
+        name: '',
+        email: '',
+        service: '',
+        amount: '',
+      })
+
+      setShowForm(false)
+      setSearch('')
+      setStatusFilter('all')
+    } catch (error) {
+      console.error('Не удалось создать заявку:', error)
+      alert(
+        'Не удалось сохранить заявку на сервере. Проверь подключение и попробуй ещё раз.'
+      )
+    }
   }
 
-  useEffect(() => {
-    localStorage.setItem('leaddesk-leads', JSON.stringify(leads))
-  }, [leads])
+  async function handleStatusChange(leadId, newStatus) {
+    try {
+      const response = await fetch(
+        'https://n8n.serhiotester97.ru/webhook/leaddesk/leads/status',
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            id: leadId,
+            status: newStatus,
+          }),
+        }
+      )
 
-  function handleUpdateLead(event) {
+      if (!response.ok) {
+        throw new Error(`Ошибка сервера: ${response.status}`)
+      }
+
+      const result = await response.json()
+
+      if (result.success !== true || !result.lead) {
+        throw new Error('Сервер не подтвердил изменение статуса.')
+      }
+
+      setLeads((prev) =>
+        prev.map((lead) =>
+          lead.id === Number(result.lead.id)
+            ? { ...lead, status: result.lead.status }
+            : lead
+        )
+      )
+    } catch (error) {
+      console.error('Не удалось обновить статус:', error)
+      alert('Не удалось сохранить статус на сервере.')
+    }
+  }
+
+
+  async function handleUpdateLead(event) {
     event.preventDefault()
+
     if (!form.name.trim() || !form.email.trim() || !form.service.trim()) {
       alert('Заполни все обязательные поля.')
       return
     }
 
-    if (form.amount === '' || !Number.isFinite(Number(form.amount)) || Number(form.amount) < 0) {
+    if (
+      form.amount === '' ||
+      !Number.isFinite(Number(form.amount)) ||
+      Number(form.amount) < 0
+    ) {
       alert('Укажи корректную сумму.')
       return
     }
-    setLeads((prev) =>
-      prev.map((lead) =>
-        lead.id === editingId
-          ? {
-            ...lead,
+
+    try {
+      const response = await fetch(
+        'https://n8n.serhiotester97.ru/webhook/leaddesk/leads/edit',
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            id: editingId,
             name: form.name.trim(),
             email: form.email.trim(),
             service: form.service.trim(),
             amount: Number(form.amount),
-          }
-          : lead
+          }),
+        }
       )
+
+      if (!response.ok) {
+        throw new Error(`Ошибка сервера: ${response.status}`)
+      }
+
+      const result = await response.json()
+
+      if (result.success !== true || !result.lead) {
+        throw new Error('Сервер не подтвердил изменение заявки.')
+      }
+
+      const updatedLead = {
+        ...result.lead,
+        id: Number(result.lead.id),
+        amount: Number(result.lead.amount),
+      }
+
+      setLeads((prev) =>
+        prev.map((lead) =>
+          lead.id === updatedLead.id ? updatedLead : lead
+        )
+      )
+
+      setEditingId(null)
+      setShowForm(false)
+      setForm({ name: '', email: '', service: '', amount: '' })
+    } catch (error) {
+      console.error('Не удалось обновить заявку:', error)
+      alert('Не удалось сохранить изменения на сервере.')
+    }
+  }
+
+  async function handleDeleteLead(leadId) {
+    const confirmed = window.confirm(
+      'Ты действительно хочешь удалить эту заявку? Это действие нельзя отменить.'
     )
 
-    setEditingId(null)
-    setShowForm(false)
-    setForm({ name: '', email: '', service: '', amount: '' })
+    if (!confirmed) return
+
+    try {
+      const response = await fetch(
+        'https://n8n.serhiotester97.ru/webhook/leaddesk/leads/delete',
+        {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            id: leadId,
+          }),
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error(`Ошибка сервера: ${response.status}`)
+      }
+
+      const result = await response.json()
+
+      if (result.success !== true || !result.deleted) {
+        throw new Error(result.message || 'Не удалось удалить заявку.')
+      }
+
+      setLeads((prev) =>
+        prev.filter((lead) => lead.id !== Number(leadId))
+      )
+    } catch (error) {
+      console.error('Не удалось удалить заявку:', error)
+      alert('Не удалось удалить заявку на сервере.')
+    }
   }
+
   return (
     <div className="app">
       <aside className="sidebar">
@@ -297,15 +478,7 @@ function App() {
                         className={`status ${lead.status}`}
                         value={lead.status}
                         onChange={(event) => {
-                          const newStatus = event.target.value
-
-                          setLeads((prev) =>
-                            prev.map((item) =>
-                              item.id === lead.id
-                                ? { ...item, status: newStatus }
-                                : item
-                            )
-                          )
+                          handleStatusChange(lead.id, event.target.value)
                         }}
                       >
                         <option value="new">Новая</option>
@@ -315,14 +488,14 @@ function App() {
                       </select>
                     </td>
                     <td>
+
                       <button
                         className="delete-button"
-                        onClick={() =>
-                          setLeads((prev) => prev.filter((item) => item.id !== lead.id))
-                        }
+                        onClick={() => handleDeleteLead(lead.id)}
                       >
                         Удалить
                       </button>
+
                       <button
                         className="edit-button"
                         onClick={() => {
